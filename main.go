@@ -35,6 +35,7 @@ func main() {
 	r.HandleFunc("/homeworks", srv.CreateHomework).Methods("POST")
 	r.HandleFunc("/homeworks/{id}", srv.DeleteHomework).Methods("DELETE")
 	r.HandleFunc("/homeworks/{id}", srv.UpdateHomework).Methods("PUT")
+	r.PathPrefix("/").Handler(http.FileServer(http.Dir("web")))
 	log.Println("listening on :6457")
 	log.Fatal(http.ListenAndServe(":6457", r))
 }
