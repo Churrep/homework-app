@@ -1,15 +1,15 @@
 package homework
 
 import (
-	"cmp"
+	"context"
 	"errors"
-	"slices"
-	"sync"
 	"time"
 )
 
 var (
-	ErrNotFound = errors.New("homework not found")
+	ErrNotFound       = errors.New("homework not found")
+	ErrInvalidInput   = errors.New("invalid input")
+	ErrInvalidSubject = errors.New("invalid subject")
 )
 
 type Homework struct {
@@ -20,12 +20,15 @@ type Homework struct {
 	DueDate     time.Time `json:"due_date"`
 	CreatedBy   int       `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-type Storage struct {
-	mtx    sync.RWMutex
-	items  map[int]Homework
-	nextID int
+type Repository interface {
+	Create(ctx context.Context, hw Homework) (Homework, error)
+	GetById(ctx context.Context, id int) (Homework, error)
+	List(ctx context.Context) ([]Homework, error)
+	Update(ctx context.Context, id int, hw Homework) (Homework, error)
+	Delete(ctx context.Context, id int) error
 }
 
 func NewHomework(subjectID int, title, description string, dueDate time.Time) Homework {
@@ -35,76 +38,4 @@ func NewHomework(subjectID int, title, description string, dueDate time.Time) Ho
 		Description: description,
 		DueDate:     dueDate,
 	}
-}
-
-func NewStorage() *Storage {
-	return &Storage{
-		items:  make(map[int]Homework),
-		nextID: 1,
-	}
-}
-
-func (s *Storage) Create(hw Homework) Homework {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	hw.ID = s.nextID
-	hw.CreatedAt = time.Now()
-	s.items[hw.ID] = hw
-	s.nextID++
-	return hw
-}
-
-func (s *Storage) GetById(id int) (Homework, error) {
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
-	hw, ok := s.items[id]
-
-	if !ok {
-		return Homework{}, ErrNotFound
-	}
-
-	return hw, nil
-}
-
-func (s *Storage) List() []Homework {
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
-
-	a := make([]Homework, 0, len(s.items))
-	for _, hw := range s.items {
-		a = append(a, hw)
-	}
-	slices.SortFunc(a, func(c, b Homework) int {
-		return cmp.Compare(c.ID, b.ID)
-	})
-	return a
-}
-
-func (s *Storage) Update(id int, hw Homework) (Homework, error) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	old, ok := s.items[id]
-
-	if !ok {
-		return Homework{}, ErrNotFound
-	}
-
-	old.SubjectID = hw.SubjectID
-	old.Title = hw.Title
-	old.Description = hw.Description
-	old.DueDate = hw.DueDate
-	s.items[id] = old
-	return old, nil
-}
-
-func (s *Storage) Delete(id int) error {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-	_, ok := s.items[id]
-
-	if !ok {
-		return ErrNotFound
-	}
-	delete(s.items, id)
-	return nil
 }

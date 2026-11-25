@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"homework-app/homework"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 /*
@@ -34,7 +37,7 @@ DELETE /notes/{id}
 */
 
 type Server struct {
-	storage *homework.Storage
+	storage homework.Repository
 }
 
 type homeworkRequest struct {
@@ -44,7 +47,7 @@ type homeworkRequest struct {
 	DueDate     string `json:"due_date"`
 }
 
-func New(storage *homework.Storage) *Server {
+func New(storage homework.Repository) *Server {
 	return &Server{
 		storage: storage,
 	}
@@ -72,7 +75,7 @@ func (req homeworkRequest) toHomework() (homework.Homework, map[string]string) {
 }
 
 func parseID(r *http.Request) (int, error) {
-	return strconv.Atoi(r.PathValue("id"))
+	return strconv.Atoi(mux.Vars(r)["id"])
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -96,8 +99,25 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func writeStorageError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, homework.ErrNotFound):
+		writeError(w, http.StatusNotFound, "домашнее задание не найдено")
+	case errors.Is(err, homework.ErrInvalidSubject):
+		writeValidationError(w, map[string]string{"subject_id": "предмет не существует"})
+	default:
+		log.Printf("storage error: %v", err)
+		writeError(w, http.StatusInternalServerError, "внутренняя ошибка")
+	}
+}
+
 func (s *Server) ListHomeworks(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.storage.List())
+	list, err := s.storage.List(r.Context())
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (s *Server) GetHomework(w http.ResponseWriter, r *http.Request) {
@@ -106,9 +126,9 @@ func (s *Server) GetHomework(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "id должен быть числом")
 		return
 	}
-	hw, err := s.storage.GetById(id)
-	if errors.Is(err, homework.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "домашнее задание не найдено")
+	hw, err := s.storage.GetById(r.Context(), id)
+	if err != nil {
+		writeStorageError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, hw)
@@ -125,8 +145,12 @@ func (s *Server) CreateHomework(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, errs)
 		return
 	}
-	hw = s.storage.Create(hw)
-	writeJSON(w, http.StatusCreated, hw)
+	created, err := s.storage.Create(r.Context(), hw)
+	if err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
 }
 
 func (s *Server) UpdateHomework(w http.ResponseWriter, r *http.Request) {
@@ -145,9 +169,9 @@ func (s *Server) UpdateHomework(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, errs)
 		return
 	}
-	updated, err := s.storage.Update(id, hw)
-	if errors.Is(err, homework.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "домашнее задание не найдено")
+	updated, err := s.storage.Update(r.Context(), id, hw)
+	if err != nil {
+		writeStorageError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
@@ -159,9 +183,8 @@ func (s *Server) DeleteHomework(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "id должен быть числом")
 		return
 	}
-	err = s.storage.Delete(id)
-	if errors.Is(err, homework.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "домашнее задание не найдено")
+	if err := s.storage.Delete(r.Context(), id); err != nil {
+		writeStorageError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
